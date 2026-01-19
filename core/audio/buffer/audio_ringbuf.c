@@ -2,41 +2,97 @@
 #include <stdlib.h>
 #include <string.h>
 
-static uint8_t *buffer;
-static size_t buf_size;
-static volatile size_t write_pos;
-static volatile size_t read_pos;
-
-void audio_rb_init(size_t size) {
-    if (buffer) {
-        free(buffer);
-    }
-    buffer = malloc(size);
-    buf_size = size;
-    write_pos = read_pos = 0;
-}
-
-size_t audio_rb_write(const uint8_t *data, size_t len) {
-    if (!buffer || !data || buf_size == 0) return 0;
+int audio_rb_init(audio_ringbuf_t *rb, size_t size) {
+    if (!rb) return -1;
     
-    size_t written = 0;
-    while (written < len) {
-        size_t next = (write_pos + 1) % buf_size;
-        if (next == read_pos) break; // full
-        buffer[write_pos] = data[written++];
-        write_pos = next;
+    rb->buffer = malloc(size);
+    if (!rb->buffer) {
+        rb->size = 0;
+        atomic_init(&rb->write_pos, 0);
+        atomic_init(&rb->read_pos, 0);
+        return -1;
     }
-    return written;
+    
+    rb->size = size;
+    atomic_init(&rb->write_pos, 0);
+    atomic_init(&rb->read_pos, 0);
+    return 0;
 }
 
-size_t audio_rb_read(uint8_t *data, size_t len) {
-    if (!buffer || !data || buf_size == 0) return 0;
-
-    size_t read = 0;
-    while (read < len && read_pos != write_pos) {
-        data[read++] = buffer[read_pos];
-        read_pos = (read_pos + 1) % buf_size;
+void audio_rb_deinit(audio_ringbuf_t *rb) {
+    if (rb && rb->buffer) {
+        free(rb->buffer);
+        rb->buffer = NULL;
+        rb->size = 0;
     }
-    return read;
+}
+
+size_t audio_rb_get_filled(audio_ringbuf_t *rb) {
+    if (!rb || !rb->buffer || rb->size == 0) return 0;
+    
+    size_t write_pos = atomic_load_explicit(&rb->write_pos, memory_order_acquire);
+    size_t read_pos = atomic_load_explicit(&rb->read_pos, memory_order_acquire);
+
+    if (write_pos >= read_pos) {
+        return write_pos - read_pos;
+    } else {
+        return rb->size - (read_pos - write_pos);
+    }
+}
+
+size_t audio_rb_write(audio_ringbuf_t *rb, const uint8_t *data, size_t len) {
+    if (!rb || !rb->buffer || !data || rb->size == 0) return 0;
+
+    size_t write_pos = atomic_load_explicit(&rb->write_pos, memory_order_relaxed);
+    size_t read_pos = atomic_load_explicit(&rb->read_pos, memory_order_acquire);
+
+    size_t free_space;
+    if (write_pos >= read_pos) {
+        free_space = rb->size - (write_pos - read_pos) - 1;
+    } else {
+        free_space = read_pos - write_pos - 1;
+    }
+
+    if (len > free_space) len = free_space;
+    if (len == 0) return 0;
+
+    size_t first_part = rb->size - write_pos;
+    if (first_part > len) first_part = len;
+
+    memcpy(&rb->buffer[write_pos], data, first_part);
+    if (len > first_part) {
+        memcpy(rb->buffer, &data[first_part], len - first_part);
+    }
+
+    atomic_store_explicit(&rb->write_pos, (write_pos + len) % rb->size, memory_order_release);
+    return len;
+}
+
+size_t audio_rb_read(audio_ringbuf_t *rb, uint8_t *data, size_t len) {
+    if (!rb || !rb->buffer || !data || rb->size == 0) return 0;
+
+    size_t read_pos = atomic_load_explicit(&rb->read_pos, memory_order_relaxed);
+    size_t write_pos = atomic_load_explicit(&rb->write_pos, memory_order_acquire);
+
+    size_t filled_space;
+    if (write_pos >= read_pos) {
+        filled_space = write_pos - read_pos;
+    } else {
+        filled_space = rb->size - (read_pos - write_pos);
+    }
+
+    if (len > filled_space) len = filled_space;
+    if (len == 0) return 0;
+
+    size_t first_part = rb->size - read_pos;
+    if (first_part > len) first_part = len;
+
+    memcpy(data, &rb->buffer[read_pos], first_part);
+    if (len > first_part) {
+        memcpy(&data[first_part], rb->buffer, len - first_part);
+    }
+
+    atomic_store_explicit(&rb->read_pos, (read_pos + len) % rb->size, memory_order_release);
+    return len;
 }
 
