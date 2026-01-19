@@ -1,9 +1,4 @@
-#include "bt_a2dp.h"
-#include "i2s_out.h"
-#include "audio_engine.h"
+#pragma once
 
-void app_main(void) {
-    audio_engine_init(NULL);
-    i2s_out_init();
-    bt_a2dp_init();
-}
+void i2s_out_init(void);
+

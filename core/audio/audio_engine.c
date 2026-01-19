@@ -1,5 +1,6 @@
 #include "audio_engine.h"
-#include "audio_ringbuf.h"
+#include "buffer/audio_ringbuf.h"
+
 
 void audio_engine_init(audio_sink_t *out) {
     audio_rb_init(64 * 1024); // 64KB buffer (~170ms)
