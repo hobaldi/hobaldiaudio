@@ -1,5 +1,7 @@
 #include "audio_engine.h"
 
+void bt_init(audio_engine_t *audio);
+
 void app_main(void)
 {
     audio_format_t fmt = {
@@ -10,9 +12,10 @@ void app_main(void)
 
     audio_engine_t *engine = audio_engine_init(&fmt);
 
-    // Bluetooth / Spotify will feed PCM here
+    bt_init(engine);
 
     while (1) {
-        // main loop
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
+
