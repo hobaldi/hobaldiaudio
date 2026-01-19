@@ -1,8 +1,11 @@
-#include <string.h>
+#ifdef ESP_PLATFORM
 #include "esp_log.h"
 #include "esp_a2dp_api.h"
 #include "esp_bt.h"
 #include "esp_bt_main.h"
+#endif
+
+#include "bt_a2dp.h"
 #include "audio_engine.h"
 
 static const char *TAG = "BT_A2DP";
