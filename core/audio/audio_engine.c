@@ -13,5 +13,15 @@ void audio_engine_write(const uint8_t *data, size_t len) {
 }
 
 size_t audio_engine_read(uint8_t *data, size_t len) {
-    return audio_rb_read(&engine_rb, data, len);
+    size_t available = audio_rb_get_filled(&engine_rb);
+    size_t to_read = (available < len) ? available : len;
+
+    // Ensure we only read whole 16-bit stereo samples (4 bytes)
+    to_read &= ~3;
+
+    if (to_read > 0) {
+        return audio_rb_read(&engine_rb, data, to_read);
+    }
+
+    return 0;
 }

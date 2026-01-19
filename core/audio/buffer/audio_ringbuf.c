@@ -5,11 +5,6 @@
 int audio_rb_init(audio_ringbuf_t *rb, size_t size) {
     if (!rb) return -1;
 
-    if (rb->buffer) {
-        free(rb->buffer);
-        rb->buffer = NULL;
-    }
-
     rb->buffer = malloc(size);
     if (!rb->buffer) {
         rb->size = 0;
@@ -29,6 +24,19 @@ void audio_rb_deinit(audio_ringbuf_t *rb) {
         free(rb->buffer);
         rb->buffer = NULL;
         rb->size = 0;
+    }
+}
+
+size_t audio_rb_get_filled(audio_ringbuf_t *rb) {
+    if (!rb || !rb->buffer || rb->size == 0) return 0;
+
+    size_t write_pos = atomic_load_explicit(&rb->write_pos, memory_order_acquire);
+    size_t read_pos = atomic_load_explicit(&rb->read_pos, memory_order_acquire);
+
+    if (write_pos >= read_pos) {
+        return write_pos - read_pos;
+    } else {
+        return rb->size - (read_pos - write_pos);
     }
 }
 
