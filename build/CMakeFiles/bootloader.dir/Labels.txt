@@ -1,0 +1,13 @@
+# Target labels
+ bootloader
+# Source files and their labels
+/home/gnr/hobaldi/build/CMakeFiles/bootloader
+/home/gnr/hobaldi/build/CMakeFiles/bootloader.rule
+/home/gnr/hobaldi/build/CMakeFiles/bootloader-complete.rule
+/home/gnr/hobaldi/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+/home/gnr/hobaldi/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+/home/gnr/hobaldi/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+/home/gnr/hobaldi/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+/home/gnr/hobaldi/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+/home/gnr/hobaldi/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+/home/gnr/hobaldi/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule
