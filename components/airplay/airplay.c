@@ -12,7 +12,7 @@ void airplay_start(const char *device_name)
 {
     // 1. Initialize mDNS
     esp_err_t err = mdns_init();
-    if (err != ESP_OK) {
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "mdns_init failed: %d", err);
         return;
     }

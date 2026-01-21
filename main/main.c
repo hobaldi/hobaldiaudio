@@ -27,19 +27,17 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    // 1. Initialize WiFi
-    wifi_init_sta();
-
-    // 2. Initialize I2S Output (PCM5102: BCLK=1, WS=2, DOUT=3)
+    // 1. Initialize Audio early
+    // PCM5102 Pins: BCLK=1, WS=2, DOUT=3
     audio_sink_t *i2s_sink = i2s_out_init();
-
-    // 3. Initialize Audio Engine with I2S sink
     audio_engine_init(i2s_sink);
 
-    // 4. Start WiFi PCM listener (Phase 1)
-    wifi_pcm_start();
+    // 2. Initialize WiFi (Now non-blocking)
+    wifi_init_sta();
 
-    // 5. Start AirPlay (Phase 2)
+    // 3. Start streaming services
+    // These will start listening but will only be accessible once WiFi is connected
+    wifi_pcm_start();
     airplay_start("Hobaldi-S3");
 
     ESP_LOGI(TAG, "Initialization complete. Ready for PCM or AirPlay stream.");

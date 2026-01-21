@@ -1,5 +1,8 @@
 #include <string.h>
 #include <ctype.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -9,6 +12,7 @@
 #include "esp_netif.h"
 #include "nvs_flash.h"
 #include "esp_http_server.h"
+#include "mdns.h"
 
 static const char *TAG = "wifi_mgr";
 
@@ -47,20 +51,56 @@ static void url_decode(char *dst, const char *src)
     *dst = '\0';
 }
 
-/* HTML for the setup page */
-static const char* setup_html =
-"<html><head><meta name='viewport' content='width=device-width, initial-scale=1'>"
-"<style>body{font-family:sans-serif;padding:20px;}input{width:100%;padding:10px;margin:5px 0;}</style></head>"
-"<body><h1>Hobaldi WiFi Setup</h1>"
-"<form method='POST' action='/setup'>"
-"SSID:<br><input type='text' name='ssid'><br>"
-"Password:<br><input type='password' name='password'><br><br>"
-"<input type='submit' value='Save and Connect'>"
-"</form></body></html>";
-
 static esp_err_t setup_get_handler(httpd_req_t *req)
 {
-    httpd_resp_send(req, setup_html, HTTPD_RESP_USE_STRLEN);
+    char *buf = malloc(8192);
+    if (!buf) return ESP_FAIL;
+    int p = 0;
+
+    p += sprintf(buf + p, "<html><head><title>Hobaldi Setup</title><meta name='viewport' content='width=device-width, initial-scale=1'>"
+                 "<style>body{font-family:sans-serif;padding:20px;background-color:#f0f0f0;} .card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.1);} input, select{width:100%%;padding:10px;margin:5px 0;box-sizing:border-box; border:1px solid #ccc; border-radius:4px;} input[type=submit]{background-color:#4CAF50;color:white;border:none;cursor:pointer;margin-top:10px;} input[type=submit]:hover{background-color:#45a049;} .status{padding:10px;margin-bottom:20px;border-radius:5px;} .connected{background-color:#dff0d8;color:#3c763d;} .disconnected{background-color:#f2dede;color:#a94442;}</style></head><body><div class='card'><h1>Hobaldi WiFi Setup</h1>");
+
+    // Connection Status
+    wifi_ap_record_t ap_info;
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        p += sprintf(buf + p, "<div class='status connected'>Connected to: <b>%s</b></div>", ap_info.ssid);
+    } else {
+        p += sprintf(buf + p, "<div class='status disconnected'>Status: Not Connected</div>");
+    }
+
+    p += sprintf(buf + p, "<p>Select a WiFi network or enter manually.</p>"
+                 "<form method='POST' action='/setup'>"
+                 "Available SSIDs:<br><select name='ssid' onchange='if(this.value==\"_manual\") {document.getElementById(\"manual_ssid\").style.display=\"block\";} else {document.getElementById(\"manual_ssid\").style.display=\"none\";}'>");
+
+    // Scan for SSIDs
+    uint16_t number = 20;
+    wifi_ap_record_t ap_records[20];
+    uint16_t ap_count = 0;
+
+    // Start scan
+    wifi_scan_config_t scan_config = { .ssid = NULL, .bssid = NULL, .channel = 0, .show_hidden = false };
+    esp_wifi_scan_start(&scan_config, true);
+    esp_wifi_scan_get_ap_records(&number, ap_records);
+    esp_wifi_scan_get_ap_num(&ap_count);
+
+    for (int i = 0; i < number; i++) {
+        p += sprintf(buf + p, "<option value='%s'>%s (RSSI: %d)</option>", (char*)ap_records[i].ssid, (char*)ap_records[i].ssid, ap_records[i].rssi);
+    }
+    p += sprintf(buf + p, "<option value='_manual'>[Enter Manually]</option></select><br>");
+    p += sprintf(buf + p, "<div id='manual_ssid' style='display:none;'>Manual SSID:<br><input type='text' name='manual_ssid' placeholder='WiFi Name'></div>");
+
+    p += sprintf(buf + p, "Password:<br><input type='password' name='password' placeholder='Password'><br><br>"
+                 "<input type='submit' value='Save and Connect'>"
+                 "</form>");
+
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+         p += sprintf(buf + p, "<hr><form method='POST' action='/disconnect'><input type='submit' value='Disconnect/Change WiFi' style='background-color:#f44336;'></form>");
+    }
+
+    p += sprintf(buf + p, "</div><p style='font-size:0.8em;color:#666;'>Portal address: http://192.168.4.1 (AP mode) or http://hobaldi-s3.local (connected)</p></body></html>");
+
+    httpd_resp_send(req, buf, strlen(buf));
+    free(buf);
     return ESP_OK;
 }
 
@@ -75,8 +115,9 @@ static esp_err_t setup_post_handler(httpd_req_t *req)
     buf[ret] = '\0';
 
     char raw_ssid[64] = {0};
+    char manual_ssid[64] = {0};
     char raw_pass[64] = {0};
-    char ssid[33] = {0};
+    char ssid[64] = {0};
     char pass[64] = {0};
 
     char *s = strstr(buf, "ssid=");
@@ -88,13 +129,26 @@ static esp_err_t setup_post_handler(httpd_req_t *req)
         if (end) *end = '&';
     }
 
+    char *m = strstr(buf, "manual_ssid=");
+    if (m) {
+        m += 12;
+        char *end = strchr(m, '&');
+        if (end) *end = '\0';
+        strncpy(manual_ssid, m, sizeof(manual_ssid)-1);
+        if (end) *end = '&';
+    }
+
     char *p = strstr(buf, "password=");
     if (p) {
         p += 9;
         strncpy(raw_pass, p, sizeof(raw_pass)-1);
     }
 
-    url_decode(ssid, raw_ssid);
+    if (strcmp(raw_ssid, "_manual") == 0) {
+        url_decode(ssid, manual_ssid);
+    } else {
+        url_decode(ssid, raw_ssid);
+    }
     url_decode(pass, raw_pass);
 
     ESP_LOGI(TAG, "Received credentials for SSID: %s", ssid);
@@ -114,17 +168,100 @@ static esp_err_t setup_post_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t disconnect_handler(httpd_req_t *req)
+{
+    nvs_handle_t nvs;
+    if (nvs_open("storage", NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_erase_key(nvs, "wifi_ssid");
+        nvs_erase_key(nvs, "wifi_pass");
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    httpd_resp_sendstr(req, "<h1>WiFi credentials erased! Rebooting to setup mode...</h1>");
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    esp_restart();
+    return ESP_OK;
+}
+
+/* Captive Portal Redirect Handler */
+static esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
+{
+    // Redirect all 404 errors to the root page (setup page)
+    ESP_LOGI(TAG, "Redirecting 404 to root for URI: %s", req->uri);
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_header(req, "Location", "http://192.168.4.1/");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
 static void start_webserver(void)
 {
+    if (server != NULL) return;
+
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.stack_size = 8192;
+    config.stack_size = 12288; // Increased for HTML generation
     config.lru_purge_enable = true;
+    config.ctrl_port = 32768; // Avoid conflicts
 
     if (httpd_start(&server, &config) == ESP_OK) {
         httpd_uri_t setup_get = { .uri = "/", .method = HTTP_GET, .handler = setup_get_handler };
         httpd_register_uri_handler(server, &setup_get);
         httpd_uri_t setup_post = { .uri = "/setup", .method = HTTP_POST, .handler = setup_post_handler };
         httpd_register_uri_handler(server, &setup_post);
+        httpd_uri_t disconnect_post = { .uri = "/disconnect", .method = HTTP_POST, .handler = disconnect_handler };
+        httpd_register_uri_handler(server, &disconnect_post);
+
+        // Register 404 error handler for captive portal redirection
+        httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, http_404_error_handler);
+    }
+}
+
+/* DNS Server Task for Captive Portal */
+static void dns_server_task(void *pvParameters)
+{
+    uint8_t data[512];
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t client_addr_len = sizeof(client_addr);
+
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+    if (sock < 0) {
+        ESP_LOGE(TAG, "Failed to create DNS socket");
+        vTaskDelete(NULL);
+    }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    server_addr.sin_port = htons(53);
+
+    if (bind(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        ESP_LOGE(TAG, "Failed to bind DNS socket");
+        close(sock);
+        vTaskDelete(NULL);
+    }
+
+    ESP_LOGI(TAG, "DNS server started on port 53");
+
+    while (1) {
+        int len = recvfrom(sock, data, sizeof(data), 0, (struct sockaddr *)&client_addr, &client_addr_len);
+        // Safety check to prevent buffer overflow when appending answer
+        if (len > 12 && len < (sizeof(data) - 16)) {
+            // Very basic DNS responder: Always return 192.168.4.1 for any A query
+            data[2] |= 0x80; // QR = 1 (Response)
+            data[3] |= 0x80; // RA = 1 (Recursion Available)
+            data[7] = 1;     // ANCOUNT = 1
+
+            int pos = len;
+            data[pos++] = 0xc0; // Name pointer
+            data[pos++] = 0x0c;
+            data[pos++] = 0x00; data[pos++] = 0x01; // Type A
+            data[pos++] = 0x00; data[pos++] = 0x01; // Class IN
+            data[pos++] = 0x00; data[pos++] = 0x00; data[pos++] = 0x00; data[pos++] = 0x3c; // TTL 60s
+            data[pos++] = 0x00; data[pos++] = 0x04; // RDLENGTH 4
+            data[pos++] = 192; data[pos++] = 168; data[pos++] = 4; data[pos++] = 1; // 192.168.4.1
+
+            sendto(sock, data, pos, 0, (struct sockaddr *)&client_addr, client_addr_len);
+        }
     }
 }
 
@@ -134,10 +271,10 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_retry_num < 5) {
+        if (s_retry_num < 10) {
             esp_wifi_connect();
             s_retry_num++;
-            ESP_LOGI(TAG, "Retrying connection to AP...");
+            ESP_LOGI(TAG, "Retrying connection to AP (%d/10)...", s_retry_num);
         } else {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
@@ -149,20 +286,39 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-void wifi_init_sta(void)
+static void start_softap_setup(void)
 {
-    s_wifi_event_group = xEventGroupCreate();
+    ESP_LOGI(TAG, "Starting SoftAP 'Hobaldi-Setup'...");
+    esp_wifi_stop();
 
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    sta_netif = esp_netif_create_default_wifi_sta();
+    if (ap_netif == NULL) {
+        ap_netif = esp_netif_create_default_wifi_ap();
+    }
 
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    wifi_config_t ap_config = {
+        .ap = {
+            .ssid = "Hobaldi-Setup",
+            .ssid_len = strlen("Hobaldi-Setup"),
+            .channel = 1,
+            .password = "",
+            .max_connection = 4,
+            .authmode = WIFI_AUTH_OPEN
+        },
+    };
 
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
 
+    start_webserver();
+    xTaskCreate(dns_server_task, "dns_server", 4096, NULL, 5, NULL);
+
+    ESP_LOGI(TAG, "Connect to 'Hobaldi-Setup' to configure WiFi.");
+    ESP_LOGI(TAG, "Setup page also available at http://hobaldi-s3.local when connected.");
+}
+
+static void wifi_manager_task(void *pvParameters)
+{
     nvs_handle_t nvs;
     char ssid[33] = {0};
     char pass[64] = {0};
@@ -190,43 +346,52 @@ void wifi_init_sta(void)
 
         ESP_LOGI(TAG, "Attempting to connect to SSID: %s", ssid);
 
+        // Wait up to 10 seconds for connection
         EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
                 WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                pdFALSE, pdFALSE, pdMS_TO_TICKS(15000));
+                pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
 
         if (bits & WIFI_CONNECTED_BIT) {
             ESP_LOGI(TAG, "Connected successfully.");
+            start_webserver(); // Start webserver even in STA mode for later adjustments
+            vTaskDelete(NULL);
             return;
         } else {
-            ESP_LOGW(TAG, "Failed to connect to stored WiFi.");
+            ESP_LOGW(TAG, "Failed to connect to stored WiFi. Falling back to setup mode.");
         }
     }
 
-    // Fallback to SoftAP
-    ESP_LOGI(TAG, "Starting SoftAP 'Hobaldi-Setup'...");
-    esp_wifi_stop();
-    ap_netif = esp_netif_create_default_wifi_ap();
-
-    wifi_config_t ap_config = {
-        .ap = {
-            .ssid = "Hobaldi-Setup",
-            .ssid_len = strlen("Hobaldi-Setup"),
-            .channel = 1,
-            .password = "",
-            .max_connection = 4,
-            .authmode = WIFI_AUTH_OPEN
-        },
-    };
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
-
-    start_webserver();
-    ESP_LOGI(TAG, "Connect to 'Hobaldi-Setup' to configure WiFi.");
+    // Fallback to setup mode
+    start_softap_setup();
 
     while(1) {
-        vTaskDelay(pdMS_TO_TICKS(10000));
-        ESP_LOGI(TAG, "Waiting for WiFi configuration...");
+        vTaskDelay(pdMS_TO_TICKS(30000));
+        ESP_LOGI(TAG, "Waiting for WiFi configuration in setup mode...");
     }
+}
+
+void wifi_init_sta(void)
+{
+    s_wifi_event_group = xEventGroupCreate();
+
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    sta_netif = esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
+
+    // Initialize mDNS with a consistent hostname
+    esp_err_t err = mdns_init();
+    if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
+        mdns_hostname_set("Hobaldi-S3");
+        mdns_instance_name_set("Hobaldi Audio Streamer");
+        mdns_service_add("Hobaldi Web Interface", "_http", "_tcp", 80, NULL, 0);
+    }
+
+    // Start WiFi management in the background
+    xTaskCreate(wifi_manager_task, "wifi_mgr", 6144, NULL, 5, NULL);
 }
