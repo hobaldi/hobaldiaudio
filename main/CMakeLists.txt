@@ -5,5 +5,7 @@ idf_component_register(
         i2s_out
         wifi_pcm
         airplay
+        esp_http_server
+        nvs_flash
 )
 

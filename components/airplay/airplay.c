@@ -26,32 +26,29 @@ void airplay_start(const char *device_name)
     char service_name[64];
     snprintf(service_name, sizeof(service_name), "112233445566@%s", device_name);
 
-    mdns_service_add(service_name, "_raop", "_tcp", 5000, NULL, 0);
-
-    // Add TXT records required for AirPlay
+    // TXT records for RAOP
     mdns_service_txt_item_t raop_txt[] = {
-        {"ch", "2"},          // channels
-        {"cn", "0,1,2,3"},    // audio codecs
-        {"da", "true"},       // digital audio
-        {"et", "0,1"},        // encryption types (0: none, 1: RSA)
-        {"md", "0,1,2"},      // metadata types
-        {"pk", "b07727d6f6cd27efb57364aa71f99cf296c00350711963080033d59521360c70"}, // public key?
-        {"sf", "0x4"},        // status flags
-        {"tp", "UDP"},        // transport
-        {"vn", "65537"},      // version
-        {"vs", "105.1"},      // version string
-        {"am", "AppleTV1,1"}, // model
+        {"ch", "2"},
+        {"cn", "0,1,2,3"},
+        {"da", "true"},
+        {"et", "0,1"},
+        {"md", "0,1,2"},
+        {"pk", "b07727d6f6cd27efb57364aa71f99cf296c00350711963080033d59521360c70"},
+        {"sf", "0x4"},
+        {"tp", "UDP"},
+        {"vn", "65537"},
+        {"vs", "105.1"},
+        {"am", "AppleTV1,1"},
     };
-    mdns_service_txt_set("_raop", "_tcp", raop_txt, sizeof(raop_txt)/sizeof(raop_txt[0]));
+    mdns_service_add(service_name, "_raop", "_tcp", 5000, raop_txt, sizeof(raop_txt)/sizeof(raop_txt[0]));
 
-    // Also advertise AirPlay service
-    mdns_service_add(device_name, "_airplay", "_tcp", 7000, NULL, 0);
+    // TXT records for AirPlay
     mdns_service_txt_item_t airplay_txt[] = {
-        {"features", "0x77"}, // features
+        {"features", "0x77"},
         {"model", "AppleTV1,1"},
         {"deviceid", "11:22:33:44:55:66"},
     };
-    mdns_service_txt_set("_airplay", "_tcp", airplay_txt, sizeof(airplay_txt)/sizeof(airplay_txt[0]));
+    mdns_service_add(device_name, "_airplay", "_tcp", 7000, airplay_txt, sizeof(airplay_txt)/sizeof(airplay_txt[0]));
 
     ESP_LOGI(TAG, "AirPlay mDNS services registered as '%s'", device_name);
 
