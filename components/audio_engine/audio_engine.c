@@ -19,13 +19,21 @@ static void audio_engine_task(void *arg)
 
     while (1) {
         size_t filled = audio_rb_get_filled(&rb);
-        if (filled < READ_BUF_SIZE) {
-            // Not enough data, wait a bit or wait for a signal
+
+        // Enforce 4-byte alignment (16-bit stereo PCM = 4 bytes per sample)
+        size_t to_read = (filled / 4) * 4;
+
+        if (to_read < 4) {
+            // Not enough data for a single sample, wait a bit
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
 
-        size_t read = audio_rb_read(&rb, read_buf, READ_BUF_SIZE);
+        if (to_read > READ_BUF_SIZE) {
+            to_read = READ_BUF_SIZE;
+        }
+
+        size_t read = audio_rb_read(&rb, read_buf, to_read);
         if (read > 0) {
             if (current_sink && current_sink->write) {
                 current_sink->write(read_buf, read);
@@ -55,9 +63,5 @@ void audio_engine_init(audio_sink_t *out)
 int audio_engine_write(const uint8_t *data, size_t len)
 {
     size_t written = audio_rb_write(&rb, data, len);
-    if (written < len) {
-        // Log sparingly to avoid flooding if buffer is full
-        // ESP_LOGW(TAG, "Buffer overflow, dropped %d bytes", len - written);
-    }
     return (int)written;
 }
