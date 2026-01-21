@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <stdlib.h>
 
 static const char *TAG = "audio_engine";
 static audio_sink_t *current_sink = NULL;
@@ -14,7 +15,13 @@ static TaskHandle_t engine_task_handle = NULL;
 
 static void audio_engine_task(void *arg)
 {
-    uint8_t read_buf[READ_BUF_SIZE];
+    uint8_t *read_buf = malloc(READ_BUF_SIZE);
+    if (!read_buf) {
+        ESP_LOGE(TAG, "Failed to allocate read buffer");
+        vTaskDelete(NULL);
+        return;
+    }
+
     ESP_LOGI(TAG, "Audio engine task started");
 
     while (1) {
@@ -40,6 +47,9 @@ static void audio_engine_task(void *arg)
             }
         }
     }
+
+    free(read_buf);
+    vTaskDelete(NULL);
 }
 
 void audio_engine_init(audio_sink_t *out)
