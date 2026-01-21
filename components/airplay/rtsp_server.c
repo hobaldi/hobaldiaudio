@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stdlib.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -11,9 +12,14 @@ static const char *TAG = "rtsp_server";
 
 static void handle_client(int client_sock)
 {
-    char buffer[2048];
+    char *buffer = malloc(2048);
+    if (!buffer) {
+        ESP_LOGE(TAG, "Failed to allocate RTSP buffer");
+        close(client_sock);
+        return;
+    }
     while (1) {
-        int len = recv(client_sock, buffer, sizeof(buffer) - 1, 0);
+        int len = recv(client_sock, buffer, 2047, 0);
         if (len <= 0) break;
         buffer[len] = '\0';
 
@@ -40,6 +46,7 @@ static void handle_client(int client_sock)
         }
         send(client_sock, response, strlen(response), 0);
     }
+    free(buffer);
     close(client_sock);
 }
 
