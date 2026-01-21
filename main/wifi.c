@@ -189,7 +189,7 @@ static esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
     // Redirect all 404 errors to the root page (setup page)
     ESP_LOGI(TAG, "Redirecting 404 to root for URI: %s", req->uri);
     httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_header(req, "Location", "http://192.168.4.1/");
+    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
     httpd_resp_send(req, NULL, 0);
     return ESP_OK;
 }
@@ -282,6 +282,16 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
+
+        // Security enhancement: ensure SoftAP is disabled once connected to home WiFi
+        wifi_mode_t mode;
+        if (esp_wifi_get_mode(&mode) == ESP_OK) {
+            if (mode == WIFI_MODE_APSTA) {
+                ESP_LOGI(TAG, "Switching to STA mode to disable setup AP for security.");
+                esp_wifi_set_mode(WIFI_MODE_STA);
+            }
+        }
+
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
