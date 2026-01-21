@@ -27,7 +27,7 @@ void airplay_start(const char *device_name)
     snprintf(service_name, sizeof(service_name), "112233445566@%s", device_name);
 
     // TXT records for RAOP
-    mdns_service_txt_item_t raop_txt[] = {
+    mdns_txt_item_t raop_txt[] = {
         {"ch", "2"},
         {"cn", "0,1,2,3"},
         {"da", "true"},
@@ -43,7 +43,7 @@ void airplay_start(const char *device_name)
     mdns_service_add(service_name, "_raop", "_tcp", 5000, raop_txt, sizeof(raop_txt)/sizeof(raop_txt[0]));
 
     // TXT records for AirPlay
-    mdns_service_txt_item_t airplay_txt[] = {
+    mdns_txt_item_t airplay_txt[] = {
         {"features", "0x77"},
         {"model", "AppleTV1,1"},
         {"deviceid", "11:22:33:44:55:66"},
