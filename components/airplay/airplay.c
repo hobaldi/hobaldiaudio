@@ -19,7 +19,7 @@ void airplay_start(const char *device_name)
     }
 
     mdns_hostname_set(device_name);
-    mdns_instance_name_set(device_name);
+    // mdns_instance_name_set(device_name); // User wants only _raop._tcp
 
     // RAOP (Remote Audio Output Protocol) advertisement
     // The instance name must be: [MACADDRESS]@[DeviceName]
@@ -31,45 +31,34 @@ void airplay_start(const char *device_name)
     snprintf(mac_str, sizeof(mac_str), "%02X%02X%02X%02X%02X%02X",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
-    // MAC with colons, UPPERCASE
-    char mac_id[18];
-    snprintf(mac_id, sizeof(mac_id), "%02X:%02X:%02X:%02X:%02X:%02X",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-
     char service_name[64];
     snprintf(service_name, sizeof(service_name), "%s@%s", mac_str, device_name);
 
-    // TXT records for RAOP
+    // TXT records for RAOP (MANDATORY FORMAT)
     mdns_txt_item_t raop_txt[] = {
         {"txtvers", "1"},
         {"ch", "2"},
         {"cn", "0,1"},
         {"da", "true"},
-        {"et", "0"},
-        {"md", "0,1,2"},
+        {"et", "0,3,5"},
+        {"md", "AudioAccessory"},
         {"pw", "false"},
         {"sr", "44100"},
         {"ss", "16"},
         {"tp", "UDP"},
         {"vn", "65537"},
         {"vs", "220.68"},
-        {"am", "ESP32"},
-        {"sf", "0x0"},
     };
     mdns_service_add(service_name, "_raop", "_tcp", 5000, raop_txt, sizeof(raop_txt)/sizeof(raop_txt[0]));
 
-    // TXT records for AirPlay
-    mdns_txt_item_t airplay_txt[] = {
-        {"features", "0x77"},
-        {"model", "ESP32"},
-        {"deviceid", mac_id},
-        {"srcvers", "101.0.8"},
-        {"vv", "2"},
-    };
-    // Note: Port 5000 is used for both as RTSP server handles both requests
-    mdns_service_add(device_name, "_airplay", "_tcp", 5000, airplay_txt, sizeof(airplay_txt)/sizeof(airplay_txt[0]));
-
-    ESP_LOGI(TAG, "AirPlay mDNS services registered as '%s'", device_name);
+    // Log the mDNS details for validation (as requested)
+    ESP_LOGI(TAG, "AirPlay (RAOP) mDNS service registered:");
+    ESP_LOGI(TAG, "  Service Name: %s", service_name);
+    ESP_LOGI(TAG, "  Port: 5000");
+    ESP_LOGI(TAG, "  TXT Records:");
+    for (int i = 0; i < sizeof(raop_txt)/sizeof(raop_txt[0]); i++) {
+        ESP_LOGI(TAG, "    %s=%s", raop_txt[i].key, raop_txt[i].value);
+    }
 
     // 2. Start RTSP server on port 5000
     rtsp_server_start(5000);

@@ -10,7 +10,7 @@ static audio_sink_t *current_sink = NULL;
 static audio_ringbuf_t rb;
 static TaskHandle_t engine_task_handle = NULL;
 
-#define RING_BUFFER_SIZE (64 * 1024) // 64KB
+#define RING_BUFFER_SIZE (32 * 1024) // 32KB
 #define READ_BUF_SIZE 4096
 
 static void audio_engine_task(void *arg)
