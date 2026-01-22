@@ -69,10 +69,19 @@ static esp_err_t setup_get_handler(httpd_req_t *req)
         p += sprintf(buf + p, "<div class='streaming-info'><h3>Streaming Status</h3>"
                      "<p>Device is <b>Discoverable</b> on your network.</p>"
                      "<ul>"
-                     "<li><b>AirPlay:</b> Connect to 'HobaldiStreamer'</li>"
-                     "<li><b>WiFi PCM:</b> Stream to port 1234 (UDP)</li>"
+                     "<li><b>iPhone/Mac (AirPlay):</b> Select 'HobaldiStreamer'</li>"
+                     "<li><b>Android/Tidal:</b> Use <b>AirMusic</b> or <b>BubbleUPnP</b></li>"
+                     "<li><b>Advanced:</b> Raw UDP PCM on port 1234</li>"
                      "</ul>"
                      "</div>");
+
+        p += sprintf(buf + p, "<div style='margin-top:20px; font-size:0.9em; color:#555;'>"
+                     "<h4>How to stream from Android/Tidal:</h4>"
+                     "<p>Tidal on Android doesn't support AirPlay or DLNA directly. We recommend:</p>"
+                     "<ol>"
+                     "<li>Install <b>AirMusic</b> to stream <i>any</i> app (like Tidal) to this device via AirPlay.</li>"
+                     "<li>Or use <b>BubbleUPnP</b> to stream Tidal via DLNA/UPnP.</li>"
+                     "</ol></div>");
 
         p += sprintf(buf + p, "<hr><p>To change WiFi network or reset settings:</p>"
                      "<form method='POST' action='/disconnect'><input type='submit' class='btn btn-danger' value='Disconnect/Change WiFi'></form>");
@@ -198,6 +207,29 @@ static esp_err_t disconnect_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t description_xml_handler(httpd_req_t *req)
+{
+    uint8_t mac[6];
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+             "<?xml version='1.0'?>"
+             "<root xmlns='urn:schemas-upnp-org:device-1-0'>"
+             "<specVersion><major>1</major><minor>0</minor></specVersion>"
+             "<device>"
+             "<deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>"
+             "<friendlyName>HobaldiStreamer</friendlyName>"
+             "<manufacturer>Hobaldi</manufacturer>"
+             "<modelName>Hobaldi S3</modelName>"
+             "<UDN>uuid:52316854-0231-9852-58%02x-%02x%02x%02x%02x%02x</UDN>"
+             "</device></root>",
+             mac[0], mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+    httpd_resp_set_type(req, "text/xml");
+    httpd_resp_send(req, buf, strlen(buf));
+    return ESP_OK;
+}
+
 /* Captive Portal Redirect Handler */
 static esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
 {
@@ -230,6 +262,9 @@ static void start_webserver(void)
 
         httpd_uri_t disconnect_get = { .uri = "/disconnect", .method = HTTP_GET, .handler = disconnect_handler };
         httpd_register_uri_handler(server, &disconnect_get);
+
+        httpd_uri_t description_xml = { .uri = "/description.xml", .method = HTTP_GET, .handler = description_xml_handler };
+        httpd_register_uri_handler(server, &description_xml);
 
         // Register 404 error handler for captive portal redirection
         httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, http_404_error_handler);
@@ -419,7 +454,15 @@ void wifi_init_sta(void)
     if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
         mdns_hostname_set("HobaldiStreamer");
         mdns_instance_name_set("Hobaldi Audio Streamer");
+
+        // 1. Web interface
         mdns_service_add("Hobaldi Web Interface", "_http", "_tcp", 80, NULL, 0);
+
+        // 2. UDP PCM Stream
+        mdns_service_add("Hobaldi PCM Stream", "_pcm", "_udp", 1234, NULL, 0);
+
+        // 3. UPnP/DLNA Discovery (Helpful for some Android apps)
+        mdns_service_add("HobaldiStreamer", "_upnp-media-renderer", "_tcp", 80, NULL, 0);
     }
 
     // Start WiFi management in the background
