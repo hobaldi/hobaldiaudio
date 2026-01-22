@@ -145,8 +145,14 @@ static void handle_client(int client_sock)
 
         if (strncmp(buffer, "TEARDOWN", 8) == 0) break;
 
-        // Reset for next request on same connection
-        total_received = 0;
+        // Check if there is more data in the buffer (pipelined requests)
+        int request_len = headers_len + content_length;
+        if (total_received > request_len) {
+            memmove(buffer, buffer + request_len, total_received - request_len);
+            total_received -= request_len;
+        } else {
+            total_received = 0;
+        }
     }
 
     free(buffer);
