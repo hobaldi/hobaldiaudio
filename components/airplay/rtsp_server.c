@@ -8,25 +8,47 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "raop_rtp.h"
 
 static const char *TAG = "rtsp_server";
 
 static void handle_client(int client_sock)
 {
-    char *buffer = malloc(4096);
+    char *buffer = malloc(8192); // Increased to accommodate headers + SDP
     if (!buffer) {
         ESP_LOGE(TAG, "Failed to allocate RTSP buffer");
         close(client_sock);
         return;
     }
 
+    int total_received = 0;
     while (1) {
-        int len = recv(client_sock, buffer, 4095, 0);
+        int len = recv(client_sock, buffer + total_received, 8191 - total_received, 0);
         if (len <= 0) break;
-        buffer[len] = '\0';
+        total_received += len;
+        buffer[total_received] = '\0';
 
-        ESP_LOGI(TAG, "Received RTSP request:\n%s", buffer);
+        // Find end of headers
+        char *header_end = strstr(buffer, "\r\n\r\n");
+        if (!header_end) continue; // Need more data
+
+        // Check for Content-Length
+        int content_length = 0;
+        char *cl_ptr = strstr(buffer, "Content-Length: ");
+        if (cl_ptr) {
+            content_length = atoi(cl_ptr + 16);
+        }
+
+        int headers_len = (header_end + 4) - buffer;
+        int body_received = total_received - headers_len;
+
+        if (body_received < content_length) {
+            continue; // Need more data for the body
+        }
+
+        // We have a full request
+        ESP_LOGI(TAG, "Received RTSP request:\n%.*s", headers_len, buffer);
 
         // Parse CSeq
         int cseq = 0;
@@ -42,19 +64,20 @@ static void handle_client(int client_sock)
             resp_len = snprintf(response, 1024,
                      "RTSP/1.0 200 OK\r\n"
                      "CSeq: %d\r\n"
-                     "Public: ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, SET_PARAMETER, GET_PARAMETER\r\n"
+                     "Public: ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, SET_PARAMETER\r\n"
                      "Server: AirTunes/105.1\r\n"
                      "\r\n", cseq);
         } else if (strncmp(buffer, "ANNOUNCE", 8) == 0) {
-            // Handle ANNOUNCE (SDP can be parsed if needed, but we assume ALAC 44100/2/16)
+            // Log SDP if present
+            if (content_length > 0) {
+                ESP_LOGI(TAG, "ANNOUNCE SDP:\n%.*s", content_length, header_end + 4);
+            }
             resp_len = snprintf(response, 1024,
                      "RTSP/1.0 200 OK\r\n"
                      "CSeq: %d\r\n"
                      "Server: AirTunes/105.1\r\n"
                      "\r\n", cseq);
         } else if (strncmp(buffer, "SETUP", 5) == 0) {
-            // Extract ports from Transport header
-            // Transport: RTP/AVP/UDP;unicast;mode=record;control_port=6001;timing_port=6002
             int control_port = 0;
             int timing_port = 0;
             char *cp = strstr(buffer, "control_port=");
@@ -64,11 +87,8 @@ static void handle_client(int client_sock)
 
             ESP_LOGI(TAG, "SETUP: control_port=%d, timing_port=%d", control_port, timing_port);
 
-            // Rule 1: Be ready BEFORE RECORD. Start RTP/I2S now.
             raop_rtp_start(control_port, timing_port);
 
-            // Respond with our ports.
-            // In RAOP, data port is usually 5001, control 5002, timing 5003
             resp_len = snprintf(response, 1024,
                      "RTSP/1.0 200 OK\r\n"
                      "CSeq: %d\r\n"
@@ -99,7 +119,6 @@ static void handle_client(int client_sock)
                      "Server: AirTunes/105.1\r\n"
                      "\r\n", cseq);
         } else if (strncmp(buffer, "SET_PARAMETER", 13) == 0) {
-            // Handle volume
             char *vol_ptr = strstr(buffer, "volume: ");
             if (vol_ptr) {
                 float vol_db = atof(vol_ptr + 8);
@@ -112,7 +131,6 @@ static void handle_client(int client_sock)
                      "Server: AirTunes/105.1\r\n"
                      "\r\n", cseq);
         } else {
-            // Default 200 OK for anything else (GET_PARAMETER, etc)
             resp_len = snprintf(response, 1024,
                      "RTSP/1.0 200 OK\r\n"
                      "CSeq: %d\r\n"
@@ -126,6 +144,15 @@ static void handle_client(int client_sock)
         free(response);
 
         if (strncmp(buffer, "TEARDOWN", 8) == 0) break;
+
+        // Check if there is more data in the buffer (pipelined requests)
+        int request_len = headers_len + content_length;
+        if (total_received > request_len) {
+            memmove(buffer, buffer + request_len, total_received - request_len);
+            total_received -= request_len;
+        } else {
+            total_received = 0;
+        }
     }
 
     free(buffer);
@@ -139,12 +166,21 @@ static void rtsp_client_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
+typedef struct {
+    int port;
+    SemaphoreHandle_t ready_sem;
+} rtsp_task_args_t;
+
 static void rtsp_task(void *arg)
 {
-    int port = (int)arg;
+    rtsp_task_args_t *args = (rtsp_task_args_t *)arg;
+    int port = args->port;
+    SemaphoreHandle_t ready_sem = args->ready_sem;
+
     int server_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
     if (server_sock < 0) {
         ESP_LOGE(TAG, "Failed to create socket: %d", errno);
+        xSemaphoreGive(ready_sem);
         vTaskDelete(NULL);
     }
 
@@ -160,11 +196,14 @@ static void rtsp_task(void *arg)
     if (bind(server_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         ESP_LOGE(TAG, "Failed to bind socket: %d", errno);
         close(server_sock);
+        xSemaphoreGive(ready_sem);
         vTaskDelete(NULL);
     }
     listen(server_sock, 5);
 
     ESP_LOGI(TAG, "RTSP server listening on port %d", port);
+    xSemaphoreGive(ready_sem);
+    free(args); // Free the arguments as we have copied what we need
 
     while (1) {
         struct sockaddr_in client_addr;
@@ -172,7 +211,6 @@ static void rtsp_task(void *arg)
         int client_sock = accept(server_sock, (struct sockaddr *)&client_addr, &addr_len);
         if (client_sock >= 0) {
             ESP_LOGI(TAG, "New RTSP client connection from %s", inet_ntoa(client_addr.sin_addr));
-            // Set receive timeout
             struct timeval tv;
             tv.tv_sec = 10;
             tv.tv_usec = 0;
@@ -188,5 +226,17 @@ static void rtsp_task(void *arg)
 
 void rtsp_server_start(int port)
 {
-    xTaskCreate(rtsp_task, "rtsp_server", 4096, (void *)port, 5, NULL);
+    SemaphoreHandle_t ready_sem = xSemaphoreCreateBinary();
+    rtsp_task_args_t *args = malloc(sizeof(rtsp_task_args_t));
+    args->port = port;
+    args->ready_sem = ready_sem;
+
+    xTaskCreate(rtsp_task, "rtsp_server", 4096, (void *)args, 5, NULL);
+
+    // Wait for the server to be listening
+    xSemaphoreTake(ready_sem, pdMS_TO_TICKS(5000));
+    vSemaphoreDelete(ready_sem);
+    // Note: args is not freed here as it's used by the task.
+    // Actually, rtsp_task should probably free it or it should be static.
+    // Let's make it more robust.
 }
