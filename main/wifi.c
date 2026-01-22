@@ -453,16 +453,6 @@ void wifi_init_sta(void)
     esp_err_t err = mdns_init();
     if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
         mdns_hostname_set("HobaldiStreamer");
-        mdns_instance_name_set("Hobaldi Audio Streamer");
-
-        // 1. Web interface
-        mdns_service_add("Hobaldi Web Interface", "_http", "_tcp", 80, NULL, 0);
-
-        // 2. UDP PCM Stream
-        mdns_service_add("Hobaldi PCM Stream", "_pcm", "_udp", 1234, NULL, 0);
-
-        // 3. UPnP/DLNA Discovery (Helpful for some Android apps)
-        mdns_service_add("HobaldiStreamer", "_upnp-media-renderer", "_tcp", 80, NULL, 0);
     }
 
     // Start WiFi management in the background
