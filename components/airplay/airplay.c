@@ -22,15 +22,18 @@ void airplay_start(const char *device_name)
     mdns_instance_name_set(device_name);
 
     // RAOP (Remote Audio Output Protocol) advertisement
-    // The service name should be: [MACADDRESS]@[DeviceName]
+    // The instance name must be: [MACADDRESS]@[DeviceName]
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_STA, mac);
+
+    // MAC without colons, lowercase
     char mac_str[13];
-    snprintf(mac_str, sizeof(mac_str), "%02X%02X%02X%02X%02X%02X",
+    snprintf(mac_str, sizeof(mac_str), "%02x%02x%02x%02x%02x%02x",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
+    // MAC with colons, lowercase
     char mac_id[18];
-    snprintf(mac_id, sizeof(mac_id), "%02X:%02X:%02X:%02X:%02X:%02X",
+    snprintf(mac_id, sizeof(mac_id), "%02x:%02x:%02x:%02x:%02x:%02x",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
     char service_name[64];
@@ -54,11 +57,13 @@ void airplay_start(const char *device_name)
 
     // TXT records for AirPlay
     mdns_txt_item_t airplay_txt[] = {
-        {"features", "0x77"},
+        {"features", "0x7"}, // 0x7 is standard for AirPlay 1 audio
         {"model", "AppleTV1,1"},
         {"deviceid", mac_id},
+        {"vv", "2"},
     };
-    mdns_service_add(device_name, "_airplay", "_tcp", 7000, airplay_txt, sizeof(airplay_txt)/sizeof(airplay_txt[0]));
+    // Note: Port 5000 is used for both as RTSP server handles both requests
+    mdns_service_add(device_name, "_airplay", "_tcp", 5000, airplay_txt, sizeof(airplay_txt)/sizeof(airplay_txt[0]));
 
     ESP_LOGI(TAG, "AirPlay mDNS services registered as '%s'", device_name);
 
