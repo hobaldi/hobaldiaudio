@@ -60,6 +60,7 @@ void airplay_start(const char *device_name)
         {"features", "0x7"}, // 0x7 is standard for AirPlay 1 audio
         {"model", "AppleTV1,1"},
         {"deviceid", mac_id},
+        {"srcvers", "101.0.8"},
         {"vv", "2"},
     };
     // Note: Port 5000 is used for both as RTSP server handles both requests

@@ -37,17 +37,26 @@ static void handle_client(int client_sock)
                      "RTSP/1.0 200 OK\r\n"
                      "CSeq: %d\r\n"
                      "Public: ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, SET_PARAMETER, GET_PARAMETER\r\n"
+                     "Server: AirTunes/105.1\r\n"
                      "\r\n", cseq);
         } else {
             snprintf(response, sizeof(response),
                      "RTSP/1.0 200 OK\r\n"
                      "CSeq: %d\r\n"
+                     "Server: AirTunes/105.1\r\n"
                      "\r\n", cseq);
         }
         send(client_sock, response, strlen(response), 0);
     }
     free(buffer);
     close(client_sock);
+}
+
+static void rtsp_client_task(void *pvParameters)
+{
+    int client_sock = (int)pvParameters;
+    handle_client(client_sock);
+    vTaskDelete(NULL);
 }
 
 static void rtsp_task(void *arg)
@@ -68,7 +77,11 @@ static void rtsp_task(void *arg)
         .sin_addr.s_addr = INADDR_ANY,
     };
 
-    bind(server_sock, (struct sockaddr *)&addr, sizeof(addr));
+    if (bind(server_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        ESP_LOGE(TAG, "Failed to bind socket: %d", errno);
+        close(server_sock);
+        vTaskDelete(NULL);
+    }
     listen(server_sock, 5);
 
     ESP_LOGI(TAG, "RTSP server listening on port %d", port);
@@ -78,7 +91,11 @@ static void rtsp_task(void *arg)
         socklen_t addr_len = sizeof(client_addr);
         int client_sock = accept(server_sock, (struct sockaddr *)&client_addr, &addr_len);
         if (client_sock >= 0) {
-            handle_client(client_sock);
+            ESP_LOGI(TAG, "New RTSP client connection");
+            if (xTaskCreate(rtsp_client_task, "rtsp_client", 4096, (void *)client_sock, 5, NULL) != pdPASS) {
+                ESP_LOGE(TAG, "Failed to create RTSP client task");
+                close(client_sock);
+            }
         }
     }
 }
