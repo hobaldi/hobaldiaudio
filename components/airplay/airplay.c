@@ -5,36 +5,28 @@
 #include <string.h>
 
 static const char *TAG = "airplay";
+static char saved_device_name[64] = "HobaldiStreamer";
 
 // Forward declaration for RTSP server
 void rtsp_server_start(int port);
 
-void airplay_start(const char *device_name)
+static void register_mdns_services(const char *device_name)
 {
-    // 1. Initialize mDNS
-    esp_err_t err = mdns_init();
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "mdns_init failed: %d", err);
-        return;
-    }
-
-    mdns_hostname_set(device_name);
-    // mdns_instance_name_set(device_name); // User wants only _raop._tcp
-
-    // RAOP (Remote Audio Output Protocol) advertisement
-    // The instance name must be: [MACADDRESS]@[DeviceName]
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_STA, mac);
 
-    // MAC without colons, UPPERCASE
+    // MAC without colons, LOWERCASE
     char mac_str[13];
-    snprintf(mac_str, sizeof(mac_str), "%02X%02X%02X%02X%02X%02X",
+    snprintf(mac_str, sizeof(mac_str), "%02x%02x%02x%02x%02x%02x",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
-    char service_name[64];
-    snprintf(service_name, sizeof(service_name), "%s@%s", mac_str, device_name);
+    char mac_colon_str[18];
+    snprintf(mac_colon_str, sizeof(mac_colon_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
-    // TXT records for RAOP (MANDATORY FORMAT)
+    char raop_service_name[64];
+    snprintf(raop_service_name, sizeof(raop_service_name), "%s@%s", mac_str, device_name);
+
     mdns_txt_item_t raop_txt[] = {
         {"txtvers", "1"},
         {"ch", "2"},
@@ -49,17 +41,45 @@ void airplay_start(const char *device_name)
         {"vn", "65537"},
         {"vs", "220.68"},
     };
-    mdns_service_add(service_name, "_raop", "_tcp", 5000, raop_txt, sizeof(raop_txt)/sizeof(raop_txt[0]));
 
-    // Log the mDNS details for validation (as requested)
-    ESP_LOGI(TAG, "AirPlay (RAOP) mDNS service registered:");
-    ESP_LOGI(TAG, "  Service Name: %s", service_name);
-    ESP_LOGI(TAG, "  Port: 5000");
-    ESP_LOGI(TAG, "  TXT Records:");
-    for (int i = 0; i < sizeof(raop_txt)/sizeof(raop_txt[0]); i++) {
-        ESP_LOGI(TAG, "    %s=%s", raop_txt[i].key, raop_txt[i].value);
+    // Remove if already exists
+    mdns_service_remove("_raop", "_tcp");
+    mdns_service_add(raop_service_name, "_raop", "_tcp", 5000, raop_txt, sizeof(raop_txt)/sizeof(raop_txt[0]));
+
+    mdns_txt_item_t airplay_txt[] = {
+        {"deviceid", mac_colon_str},
+        {"features", "0x7"},
+        {"model", "AudioAccessory1,1"},
+        {"srcvers", "220.68"},
+        {"vv", "2"},
+    };
+
+    mdns_service_remove("_airplay", "_tcp");
+    mdns_service_add(device_name, "_airplay", "_tcp", 5000, airplay_txt, sizeof(airplay_txt)/sizeof(airplay_txt[0]));
+
+    ESP_LOGI(TAG, "AirPlay services (re)registered for %s", device_name);
+}
+
+void airplay_start(const char *device_name)
+{
+    strncpy(saved_device_name, device_name, sizeof(saved_device_name)-1);
+
+    // 1. Start RTSP server
+    rtsp_server_start(5000);
+
+    // 2. Initialize mDNS
+    esp_err_t err = mdns_init();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "mdns_init failed: %d", err);
+        return;
     }
 
-    // 2. Start RTSP server on port 5000
-    rtsp_server_start(5000);
+    mdns_hostname_set(device_name);
+    register_mdns_services(device_name);
+}
+
+void airplay_reannounce(void)
+{
+    ESP_LOGI(TAG, "Re-announcing AirPlay services...");
+    register_mdns_services(saved_device_name);
 }

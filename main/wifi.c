@@ -13,6 +13,7 @@
 #include "nvs_flash.h"
 #include "esp_http_server.h"
 #include "mdns.h"
+#include "airplay.h"
 
 static const char *TAG = "wifi_mgr";
 
@@ -58,7 +59,19 @@ static esp_err_t setup_get_handler(httpd_req_t *req)
     int p = 0;
 
     p += sprintf(buf + p, "<html><head><title>HobaldiStreamer</title><meta name='viewport' content='width=device-width, initial-scale=1'>"
-                 "<style>body{font-family:sans-serif;padding:20px;background-color:#f0f0f0;} .card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.1);} input, select{width:100%%;padding:10px;margin:5px 0;box-sizing:border-box; border:1px solid #ccc; border-radius:4px;} input[type=submit], .btn{display:block;width:100%%;padding:12px;margin:10px 0;box-sizing:border-box; border:none; border-radius:4px; text-align:center; text-decoration:none; font-size:16px; cursor:pointer;} .btn-primary{background-color:#4CAF50;color:white;} .btn-danger{background-color:#f44336;color:white;} .status{padding:10px;margin-bottom:20px;border-radius:5px;} .connected{background-color:#dff0d8;color:#3c763d;} .disconnected{background-color:#f2dede;color:#a94442;} .streaming-info{background-color:#e3f2fd;padding:15px;border-radius:8px;margin-top:10px;border-left:5px solid #2196F3;}</style></head><body><div class='card'><h1>HobaldiStreamer</h1>");
+                 "<style>body{font-family:sans-serif;padding:20px;background-color:#f0f0f0;} .card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.1);} input, select{width:100%%;padding:10px;margin:5px 0;box-sizing:border-box; border:1px solid #ccc; border-radius:4px;} input[type=submit], .btn{display:block;width:100%%;padding:12px;margin:10px 0;box-sizing:border-box; border:none; border-radius:4px; text-align:center; text-decoration:none; font-size:16px; cursor:pointer;} .btn-primary{background-color:#4CAF50;color:white;} .btn-info{background-color:#2196F3;color:white;} .btn-danger{background-color:#f44336;color:white;} .status{padding:10px;margin-bottom:20px;border-radius:5px;} .connected{background-color:#dff0d8;color:#3c763d;} .disconnected{background-color:#f2dede;color:#a94442;} .streaming-info{background-color:#e3f2fd;padding:15px;border-radius:8px;margin-top:10px;border-left:5px solid #2196F3;}</style>"
+                 "<script>"
+                 "function triggerAirPlay() {"
+                 "  var video = document.createElement('video');"
+                 "  if (window.WebKitPlaybackTargetAvailabilityEvent) {"
+                 "    video.addEventListener('webkitplaybacktargetavailabilitychanged', function(event) {"
+                 "      if (event.availability == 'available') { video.webkitShowPlaybackTargetPicker(); }"
+                 "    });"
+                 "    video.webkitShowPlaybackTargetPicker();"
+                 "  } else { alert('AirPlay picker not supported in this browser. Please use Control Center.'); }"
+                 "}"
+                 "</script>"
+                 "</head><body><div class='card'><h1>HobaldiStreamer</h1>");
 
     wifi_ap_record_t ap_info;
     bool connected = (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK);
@@ -71,17 +84,11 @@ static esp_err_t setup_get_handler(httpd_req_t *req)
                      "<ul>"
                      "<li><b>iPhone/Mac (AirPlay):</b> Select 'HobaldiStreamer'</li>"
                      "<li><b>Android/Tidal:</b> Use <b>AirMusic</b> or <b>BubbleUPnP</b></li>"
-                     "<li><b>Advanced:</b> Raw UDP PCM on port 1234</li>"
                      "</ul>"
                      "</div>");
 
-        p += sprintf(buf + p, "<div style='margin-top:20px; font-size:0.9em; color:#555;'>"
-                     "<h4>How to stream from Android/Tidal:</h4>"
-                     "<p>Tidal on Android doesn't support AirPlay or DLNA directly. We recommend:</p>"
-                     "<ol>"
-                     "<li>Install <b>AirMusic</b> to stream <i>any</i> app (like Tidal) to this device via AirPlay.</li>"
-                     "<li>Or use <b>BubbleUPnP</b> to stream Tidal via DLNA/UPnP.</li>"
-                     "</ol></div>");
+        p += sprintf(buf + p, "<button class='btn btn-primary' onclick='triggerAirPlay()'>Connect this phone to AirPlay</button>");
+        p += sprintf(buf + p, "<form method='POST' action='/reannounce'><input type='submit' class='btn btn-info' value='Refresh AirPlay Discovery'></form>");
 
         p += sprintf(buf + p, "<hr><p>To change WiFi network or reset settings:</p>"
                      "<form method='POST' action='/disconnect'><input type='submit' class='btn btn-danger' value='Disconnect/Change WiFi'></form>");
@@ -185,6 +192,14 @@ static esp_err_t setup_post_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t reannounce_handler(httpd_req_t *req)
+{
+    airplay_reannounce();
+    const char *resp = "<html><head><meta http-equiv='refresh' content='2;url=/'></head><body><h1>Refreshing AirPlay...</h1><p>Device is re-announcing itself on the network.</p></body></html>";
+    httpd_resp_send(req, resp, strlen(resp));
+    return ESP_OK;
+}
+
 static esp_err_t disconnect_handler(httpd_req_t *req)
 {
     nvs_handle_t nvs;
@@ -262,6 +277,9 @@ static void start_webserver(void)
 
         httpd_uri_t disconnect_get = { .uri = "/disconnect", .method = HTTP_GET, .handler = disconnect_handler };
         httpd_register_uri_handler(server, &disconnect_get);
+
+        httpd_uri_t reannounce_post = { .uri = "/reannounce", .method = HTTP_POST, .handler = reannounce_handler };
+        httpd_register_uri_handler(server, &reannounce_post);
 
         httpd_uri_t description_xml = { .uri = "/description.xml", .method = HTTP_GET, .handler = description_xml_handler };
         httpd_register_uri_handler(server, &description_xml);
