@@ -221,7 +221,7 @@ static esp_err_t description_xml_handler(httpd_req_t *req)
              "<friendlyName>HobaldiStreamer</friendlyName>"
              "<manufacturer>Hobaldi</manufacturer>"
              "<modelName>Hobaldi S3</modelName>"
-             "<UDN>uuid:52316854-0231-9852-58%02x-%02x%02x%02x%02x%02x</UDN>"
+             "<UDN>uuid:52316854-0231-9852-58%02x-%02x%02x%02x%02x%02x%02x</UDN>"
              "</device></root>",
              mac[0], mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
