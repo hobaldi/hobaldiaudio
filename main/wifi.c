@@ -57,47 +57,60 @@ static esp_err_t setup_get_handler(httpd_req_t *req)
     if (!buf) return ESP_FAIL;
     int p = 0;
 
-    p += sprintf(buf + p, "<html><head><title>Hobaldi Setup</title><meta name='viewport' content='width=device-width, initial-scale=1'>"
-                 "<style>body{font-family:sans-serif;padding:20px;background-color:#f0f0f0;} .card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.1);} input, select{width:100%%;padding:10px;margin:5px 0;box-sizing:border-box; border:1px solid #ccc; border-radius:4px;} input[type=submit]{background-color:#4CAF50;color:white;border:none;cursor:pointer;margin-top:10px;} input[type=submit]:hover{background-color:#45a049;} .status{padding:10px;margin-bottom:20px;border-radius:5px;} .connected{background-color:#dff0d8;color:#3c763d;} .disconnected{background-color:#f2dede;color:#a94442;}</style></head><body><div class='card'><h1>Hobaldi WiFi Setup</h1>");
+    p += sprintf(buf + p, "<html><head><title>HobaldiStreamer</title><meta name='viewport' content='width=device-width, initial-scale=1'>"
+                 "<style>body{font-family:sans-serif;padding:20px;background-color:#f0f0f0;} .card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.1);} input, select{width:100%%;padding:10px;margin:5px 0;box-sizing:border-box; border:1px solid #ccc; border-radius:4px;} input[type=submit], .btn{display:block;width:100%%;padding:12px;margin:10px 0;box-sizing:border-box; border:none; border-radius:4px; text-align:center; text-decoration:none; font-size:16px; cursor:pointer;} .btn-primary{background-color:#4CAF50;color:white;} .btn-danger{background-color:#f44336;color:white;} .status{padding:10px;margin-bottom:20px;border-radius:5px;} .connected{background-color:#dff0d8;color:#3c763d;} .disconnected{background-color:#f2dede;color:#a94442;} .streaming-info{background-color:#e3f2fd;padding:15px;border-radius:8px;margin-top:10px;border-left:5px solid #2196F3;}</style></head><body><div class='card'><h1>HobaldiStreamer</h1>");
 
-    // Connection Status
     wifi_ap_record_t ap_info;
-    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
-        p += sprintf(buf + p, "<div class='status connected'>Connected to: <b>%s</b></div>", ap_info.ssid);
+    bool connected = (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK);
+
+    if (connected) {
+        // Connected Home Page
+        p += sprintf(buf + p, "<div class='status connected'>Status: <b>Connected to %s</b></div>", ap_info.ssid);
+        p += sprintf(buf + p, "<div class='streaming-info'><h3>Streaming Status</h3>"
+                     "<p>Device is <b>Discoverable</b> on your network.</p>"
+                     "<ul>"
+                     "<li><b>iPhone/Mac (AirPlay):</b> Select 'HobaldiStreamer'</li>"
+                     "<li><b>Android/Tidal:</b> Use <b>AirMusic</b> or <b>BubbleUPnP</b></li>"
+                     "<li><b>Advanced:</b> Raw UDP PCM on port 1234</li>"
+                     "</ul>"
+                     "</div>");
+
+        p += sprintf(buf + p, "<div style='margin-top:20px; font-size:0.9em; color:#555;'>"
+                     "<h4>How to stream from Android/Tidal:</h4>"
+                     "<p>Tidal on Android doesn't support AirPlay or DLNA directly. We recommend:</p>"
+                     "<ol>"
+                     "<li>Install <b>AirMusic</b> to stream <i>any</i> app (like Tidal) to this device via AirPlay.</li>"
+                     "<li>Or use <b>BubbleUPnP</b> to stream Tidal via DLNA/UPnP.</li>"
+                     "</ol></div>");
+
+        p += sprintf(buf + p, "<hr><p>To change WiFi network or reset settings:</p>"
+                     "<form method='POST' action='/disconnect'><input type='submit' class='btn btn-danger' value='Disconnect/Change WiFi'></form>");
     } else {
+        // Setup Page
         p += sprintf(buf + p, "<div class='status disconnected'>Status: Not Connected</div>");
+        p += sprintf(buf + p, "<p>Select a WiFi network to start streaming.</p>"
+                     "<form method='POST' action='/setup'>"
+                     "Available SSIDs:<br><select name='ssid' onchange='if(this.value==\"_manual\") {document.getElementById(\"manual_ssid\").style.display=\"block\";} else {document.getElementById(\"manual_ssid\").style.display=\"none\";}'>");
+
+        // Scan for SSIDs
+        uint16_t number = 20;
+        wifi_ap_record_t ap_records[20];
+        wifi_scan_config_t scan_config = { .ssid = NULL, .bssid = NULL, .channel = 0, .show_hidden = false };
+        esp_wifi_scan_start(&scan_config, true);
+        esp_wifi_scan_get_ap_records(&number, ap_records);
+
+        for (int i = 0; i < number; i++) {
+            p += sprintf(buf + p, "<option value='%s'>%s (RSSI: %d)</option>", (char*)ap_records[i].ssid, (char*)ap_records[i].ssid, ap_records[i].rssi);
+        }
+        p += sprintf(buf + p, "<option value='_manual'>[Enter Manually]</option></select><br>");
+        p += sprintf(buf + p, "<div id='manual_ssid' style='display:none;'>Manual SSID:<br><input type='text' name='manual_ssid' placeholder='WiFi Name'></div>");
+
+        p += sprintf(buf + p, "Password:<br><input type='password' name='password' placeholder='Password'><br><br>"
+                     "<input type='submit' class='btn btn-primary' value='Save and Connect'>"
+                     "</form>");
     }
 
-    p += sprintf(buf + p, "<p>Select a WiFi network or enter manually.</p>"
-                 "<form method='POST' action='/setup'>"
-                 "Available SSIDs:<br><select name='ssid' onchange='if(this.value==\"_manual\") {document.getElementById(\"manual_ssid\").style.display=\"block\";} else {document.getElementById(\"manual_ssid\").style.display=\"none\";}'>");
-
-    // Scan for SSIDs
-    uint16_t number = 20;
-    wifi_ap_record_t ap_records[20];
-    uint16_t ap_count = 0;
-
-    // Start scan
-    wifi_scan_config_t scan_config = { .ssid = NULL, .bssid = NULL, .channel = 0, .show_hidden = false };
-    esp_wifi_scan_start(&scan_config, true);
-    esp_wifi_scan_get_ap_records(&number, ap_records);
-    esp_wifi_scan_get_ap_num(&ap_count);
-
-    for (int i = 0; i < number; i++) {
-        p += sprintf(buf + p, "<option value='%s'>%s (RSSI: %d)</option>", (char*)ap_records[i].ssid, (char*)ap_records[i].ssid, ap_records[i].rssi);
-    }
-    p += sprintf(buf + p, "<option value='_manual'>[Enter Manually]</option></select><br>");
-    p += sprintf(buf + p, "<div id='manual_ssid' style='display:none;'>Manual SSID:<br><input type='text' name='manual_ssid' placeholder='WiFi Name'></div>");
-
-    p += sprintf(buf + p, "Password:<br><input type='password' name='password' placeholder='Password'><br><br>"
-                 "<input type='submit' value='Save and Connect'>"
-                 "</form>");
-
-    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
-         p += sprintf(buf + p, "<hr><form method='POST' action='/disconnect'><input type='submit' value='Disconnect/Change WiFi' style='background-color:#f44336;'></form>");
-    }
-
-    p += sprintf(buf + p, "</div><p style='font-size:0.8em;color:#666;'>Portal address: http://192.168.4.1 (AP mode) or http://hobaldi-s3.local (connected)</p></body></html>");
+    p += sprintf(buf + p, "</div><p style='font-size:0.8em;color:#666;'>Portal: http://hobaldistreamer.local or http://192.168.4.1</p></body></html>");
 
     httpd_resp_send(req, buf, strlen(buf));
     free(buf);
@@ -162,7 +175,11 @@ static esp_err_t setup_post_handler(httpd_req_t *req)
         nvs_close(nvs);
     }
 
-    httpd_resp_sendstr(req, "<h1>Credentials saved! Rebooting...</h1>");
+    const char *resp = "<html><head><meta http-equiv='refresh' content='10;url=http://hobaldistreamer.local/'></head>"
+                       "<body><h1>Credentials saved!</h1><p>Rebooting to connect to WiFi...</p>"
+                       "<p>In 10 seconds, this page will try to redirect to <a href='http://hobaldistreamer.local/'>http://hobaldistreamer.local/</a></p>"
+                       "<p>If it doesn't work, make sure your phone is on the SAME WiFi network as the device.</p></body></html>";
+    httpd_resp_send(req, resp, strlen(resp));
     vTaskDelay(pdMS_TO_TICKS(2000));
     esp_restart();
     return ESP_OK;
@@ -177,9 +194,39 @@ static esp_err_t disconnect_handler(httpd_req_t *req)
         nvs_commit(nvs);
         nvs_close(nvs);
     }
-    httpd_resp_sendstr(req, "<h1>WiFi credentials erased! Rebooting to setup mode...</h1>");
+    // Also clear WiFi driver's internal storage
+    esp_wifi_restore();
+
+    const char *resp = "<html><body><h1>WiFi credentials erased!</h1>"
+                       "<p>The device is rebooting to <b>Setup Mode</b>.</p>"
+                       "<p>Please connect your phone to the <b>'Hobaldi-Setup'</b> WiFi network to configure it again.</p>"
+                       "<p>Then go to <a href='http://192.168.4.1/'>http://192.168.4.1/</a></p></body></html>";
+    httpd_resp_send(req, resp, strlen(resp));
     vTaskDelay(pdMS_TO_TICKS(2000));
     esp_restart();
+    return ESP_OK;
+}
+
+static esp_err_t description_xml_handler(httpd_req_t *req)
+{
+    uint8_t mac[6];
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+             "<?xml version='1.0'?>"
+             "<root xmlns='urn:schemas-upnp-org:device-1-0'>"
+             "<specVersion><major>1</major><minor>0</minor></specVersion>"
+             "<device>"
+             "<deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>"
+             "<friendlyName>HobaldiStreamer</friendlyName>"
+             "<manufacturer>Hobaldi</manufacturer>"
+             "<modelName>Hobaldi S3</modelName>"
+             "<UDN>uuid:52316854-0231-9852-58%02x-%02x%02x%02x%02x%02x</UDN>"
+             "</device></root>",
+             mac[0], mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+    httpd_resp_set_type(req, "text/xml");
+    httpd_resp_send(req, buf, strlen(buf));
     return ESP_OK;
 }
 
@@ -206,10 +253,18 @@ static void start_webserver(void)
     if (httpd_start(&server, &config) == ESP_OK) {
         httpd_uri_t setup_get = { .uri = "/", .method = HTTP_GET, .handler = setup_get_handler };
         httpd_register_uri_handler(server, &setup_get);
+
         httpd_uri_t setup_post = { .uri = "/setup", .method = HTTP_POST, .handler = setup_post_handler };
         httpd_register_uri_handler(server, &setup_post);
+
         httpd_uri_t disconnect_post = { .uri = "/disconnect", .method = HTTP_POST, .handler = disconnect_handler };
         httpd_register_uri_handler(server, &disconnect_post);
+
+        httpd_uri_t disconnect_get = { .uri = "/disconnect", .method = HTTP_GET, .handler = disconnect_handler };
+        httpd_register_uri_handler(server, &disconnect_get);
+
+        httpd_uri_t description_xml = { .uri = "/description.xml", .method = HTTP_GET, .handler = description_xml_handler };
+        httpd_register_uri_handler(server, &description_xml);
 
         // Register 404 error handler for captive portal redirection
         httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, http_404_error_handler);
@@ -324,7 +379,7 @@ static void start_softap_setup(void)
     xTaskCreate(dns_server_task, "dns_server", 4096, NULL, 5, NULL);
 
     ESP_LOGI(TAG, "Connect to 'Hobaldi-Setup' to configure WiFi.");
-    ESP_LOGI(TAG, "Setup page also available at http://hobaldi-s3.local when connected.");
+    ESP_LOGI(TAG, "Setup page also available at http://hobaldistreamer.local when connected.");
 }
 
 static void wifi_manager_task(void *pvParameters)
@@ -397,9 +452,17 @@ void wifi_init_sta(void)
     // Initialize mDNS with a consistent hostname
     esp_err_t err = mdns_init();
     if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
-        mdns_hostname_set("Hobaldi-S3");
+        mdns_hostname_set("HobaldiStreamer");
         mdns_instance_name_set("Hobaldi Audio Streamer");
+
+        // 1. Web interface
         mdns_service_add("Hobaldi Web Interface", "_http", "_tcp", 80, NULL, 0);
+
+        // 2. UDP PCM Stream
+        mdns_service_add("Hobaldi PCM Stream", "_pcm", "_udp", 1234, NULL, 0);
+
+        // 3. UPnP/DLNA Discovery (Helpful for some Android apps)
+        mdns_service_add("HobaldiStreamer", "_upnp-media-renderer", "_tcp", 80, NULL, 0);
     }
 
     // Start WiFi management in the background

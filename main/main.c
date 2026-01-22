@@ -38,7 +38,7 @@ void app_main(void)
     // 3. Start streaming services
     // These will start listening but will only be accessible once WiFi is connected
     wifi_pcm_start();
-    airplay_start("Hobaldi-S3");
+    airplay_start("HobaldiStreamer");
 
     ESP_LOGI(TAG, "Initialization complete. Ready for PCM or AirPlay stream.");
 }
