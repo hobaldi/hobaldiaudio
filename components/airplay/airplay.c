@@ -26,14 +26,14 @@ void airplay_start(const char *device_name)
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_STA, mac);
 
-    // MAC without colons, lowercase
+    // MAC without colons, UPPERCASE
     char mac_str[13];
-    snprintf(mac_str, sizeof(mac_str), "%02x%02x%02x%02x%02x%02x",
+    snprintf(mac_str, sizeof(mac_str), "%02X%02X%02X%02X%02X%02X",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
-    // MAC with colons, lowercase
+    // MAC with colons, UPPERCASE
     char mac_id[18];
-    snprintf(mac_id, sizeof(mac_id), "%02x:%02x:%02x:%02x:%02x:%02x",
+    snprintf(mac_id, sizeof(mac_id), "%02X:%02X:%02X:%02X:%02X:%02X",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
     char service_name[64];
@@ -41,24 +41,27 @@ void airplay_start(const char *device_name)
 
     // TXT records for RAOP
     mdns_txt_item_t raop_txt[] = {
+        {"txtvers", "1"},
         {"ch", "2"},
-        {"cn", "0,1,2,3"},
+        {"cn", "0,1"},
         {"da", "true"},
-        {"et", "0,1"},
+        {"et", "0"},
         {"md", "0,1,2"},
-        {"pk", "b07727d6f6cd27efb57364aa71f99cf296c00350711963080033d59521360c70"},
-        {"sf", "0x4"},
+        {"pw", "false"},
+        {"sr", "44100"},
+        {"ss", "16"},
         {"tp", "UDP"},
         {"vn", "65537"},
-        {"vs", "105.1"},
-        {"am", "AppleTV1,1"},
+        {"vs", "220.68"},
+        {"am", "ESP32"},
+        {"sf", "0x0"},
     };
     mdns_service_add(service_name, "_raop", "_tcp", 5000, raop_txt, sizeof(raop_txt)/sizeof(raop_txt[0]));
 
     // TXT records for AirPlay
     mdns_txt_item_t airplay_txt[] = {
-        {"features", "0x7"}, // 0x7 is standard for AirPlay 1 audio
-        {"model", "AppleTV1,1"},
+        {"features", "0x77"},
+        {"model", "ESP32"},
         {"deviceid", mac_id},
         {"srcvers", "101.0.8"},
         {"vv", "2"},
